@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ID/PW & カード コピーツール（iPhone対応）</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 16px; background:#fafafa; margin:0; padding-bottom: 60px; }
+  h3 { margin: 0 0 10px; font-size:18px; }
+  textarea { width:100%; font-family: ui-monospace; font-size:14px; margin-top:10px; box-sizing:border-box; }
+  .toolbar { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .toolbar button { flex:1; font-size:14px; padding:6px; border-radius:6px; }
+  #list { margin-top:12px; }
+  .row { display:flex; gap:12px; align-items:center; padding:12px 10px; border-bottom:1px solid #ddd; background:#fff; border-radius:8px; margin-bottom:8px; }
+  
+  .data-container { display:flex; flex-wrap:wrap; gap:8px; flex:1; }
+  .btn-wrapper { display:flex; flex-direction:column; align-items:flex-start; }
+  .label { font-size:10px; color:#666; margin-bottom:2px; margin-left:2px; }
+  
+  /* 値そのものをボタン化 */
+  button.data-btn { 
+    font-size:14px; font-family:ui-monospace; padding:6px 10px; 
+    border:1px solid #ccc; border-radius:6px; background:#f7f7f7; 
+    word-break:break-word; text-align:left; cursor:pointer;
+    max-width: 100%;
+  }
+  button.data-btn:active { background:#e0e0e0; }
+  
+  input[type="checkbox"] { transform: scale(1.2); flex-shrink: 0; }
+
+  /* 検索機能のフローティングUI */
+  #search-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    align-items: center;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 24px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+    padding: 4px;
+    z-index: 1000;
+  }
+  #search-input {
+    width: 0;
+    border: none;
+    outline: none;
+    padding: 0;
+    background: transparent;
+    font-size: 16px;
+    transition: width 0.3s, padding 0.3s;
+  }
+  #search-container.active #search-input {
+    width: 180px;
+    padding: 0 10px;
+  }
+  #search-btn {
+    background: none;
+    border: none;
+    font-size: 18px;
+    padding: 6px;
+    cursor: pointer;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+</style>
+</head>
+<body>
+
+<h3>ID / パスワード & カード コピー</h3>
+
+<textarea id="input" placeholder="ID:PW:名義人:カード番号:年:月:CVV を改行区切りで貼り付け" rows="4"></textarea>
+<div class="toolbar">
+  <button id="addBtn">追加</button>
+  <button id="clearBtn">クリア</button>
+</div>
+
+<div id="list"></div>
+
+<div id="search-container">
+  <input type="text" id="search-input" placeholder="検索...">
+  <button id="search-btn">🔍</button>
+</div>
+
+<script>
+let items = [];
+const KEY = 'coloncopy.items.v2';
+const LABELS = ['ID', 'PW', '名義人', 'カード番号', '年', '月', 'CVV'];
+
+function save(){ localStorage.setItem(KEY, JSON.stringify(items)); }
+
+// 過去のデータフォーマットと互換性を持たせてロード
+function load(){
+  try{ 
+    const loaded = JSON.parse(localStorage.getItem(KEY)||'[]'); 
+    items = loaded.map(it => {
+      if (it.parts) {
+        // 前回のバージョン（6項目）で保存されたデータがある場合、名義人の位置を空欄で埋めてズレを防ぐ
+        if (it.parts.length === 6 && !it.parts[2].match(/^[A-Z]+\s[A-Z]+$/i)) {
+           it.parts.splice(2, 0, "");
+        }
+        return it;
+      }
+      if (it.idtxt !== undefined) return { parts: [it.idtxt, it.pwtxt], checked: it.checked || false };
+      return { parts: [], checked: false };
+    });
+  }
+  catch(e){ items=[]; }
+}
+
+function copyText(txt){
+  navigator.clipboard.writeText(txt).then(()=>alert(`コピーしました: ${txt}`))
+  .catch(()=>alert('コピーできません（Safari設定を確認）'));
+}
+
+function render(query = ''){
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  const q = query.toLowerCase().trim();
+
+  // 検索クエリで絞り込み
+  const filtered = items.filter(it => {
+    if(!q) return true;
+    const textToSearch = it.parts.join(' ');
+    return textToSearch.toLowerCase().includes(q);
+  });
+
+  if(!filtered.length){
+    list.innerHTML = '<p style="color:#666;">データがありません。</p>';
+    return;
+  }
+
+  for(const it of filtered){
+    const row = document.createElement('div');
+    row.className='row';
+
+    const cb = document.createElement('input');
+    cb.type='checkbox';
+    cb.checked = it.checked;
+    cb.addEventListener('change', ()=>{ it.checked = cb.checked; save(); });
+    row.appendChild(cb);
+
+    const dataContainer = document.createElement('div');
+    dataContainer.className = 'data-container';
+
+    // コロンで区切られた各パーツをボタンとして生成
+    it.parts.forEach((part, index) => {
+      if(!part) return; // 空の場合はスキップ
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'btn-wrapper';
+
+      const label = document.createElement('span');
+      label.className = 'label';
+      label.textContent = LABELS[index] || `項目${index + 1}`;
+      wrapper.appendChild(label);
+
+      const btn = document.createElement('button');
+      btn.className = 'data-btn';
+      btn.textContent = part;
+      btn.onclick = () => copyText(part);
+      wrapper.appendChild(btn);
+
+      dataContainer.appendChild(wrapper);
+    });
+
+    row.appendChild(dataContainer);
+    list.appendChild(row);
+  }
+}
+
+document.getElementById('addBtn').onclick=()=>{
+  const val=document.getElementById('input').value.trim();
+  if(!val){ alert('データを入力してください'); return; }
+  
+  const lines=val.split('\n').filter(l=>l.includes(':'));
+  for(const line of lines){
+    const parts = line.split(':').map(p=>p.trim());
+    if(parts.length > 0) {
+      items.push({ parts: parts, checked: false });
+    }
+  }
+  save(); 
+  
+  // 検索状態をリセットして再描画
+  document.getElementById('search-input').value = '';
+  document.getElementById('search-container').classList.remove('active');
+  render();
+  document.getElementById('input').value='';
+};
+
+document.getElementById('clearBtn').onclick=()=>{
+  if(confirm('全て削除しますか？')){ items=[]; save(); render(); }
+};
+
+// 検索UIの制御
+const searchContainer = document.getElementById('search-container');
+const searchInput = document.getElementById('search-input');
+const searchBtn = document.getElementById('search-btn');
+
+searchBtn.onclick = () => {
+  searchContainer.classList.toggle('active');
+  if (searchContainer.classList.contains('active')) {
+    searchInput.focus();
+  } else {
+    searchInput.value = '';
+    render(); 
+  }
+};
+
+searchInput.addEventListener('input', (e) => {
+  render(e.target.value);
+});
+
+// 初期読み込み
+load(); 
+render();
+</script>
+
+</body>
+</html>
