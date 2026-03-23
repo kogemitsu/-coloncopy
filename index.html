@@ -11,13 +11,22 @@
   .toolbar { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
   .toolbar button { flex:1; font-size:14px; padding:6px; border-radius:6px; }
   #list { margin-top:12px; }
-  .row { display:grid; grid-template-columns: 26px 1fr auto; gap:8px; align-items:center;
-         padding:8px 10px; border-bottom:1px solid #ddd; background:#fff; border-radius:8px; margin-bottom:6px; }
-  .meta { font-size:14px; word-break:break-all; line-height: 1.4; }
-  .buttons { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; max-width: 130px; }
-  button.copy { font-size:12px; padding:4px 6px; border:1px solid #ccc; border-radius:6px; background:#f7f7f7; white-space:nowrap; }
-  button.copy:active { background:#e0e0e0; }
-  input[type="checkbox"] { transform: scale(1.2); }
+  .row { display:flex; gap:12px; align-items:center; padding:12px 10px; border-bottom:1px solid #ddd; background:#fff; border-radius:8px; margin-bottom:8px; }
+  
+  .data-container { display:flex; flex-wrap:wrap; gap:8px; flex:1; }
+  .btn-wrapper { display:flex; flex-direction:column; align-items:flex-start; }
+  .label { font-size:10px; color:#666; margin-bottom:2px; margin-left:2px; }
+  
+  /* 値そのものをボタン化 */
+  button.data-btn { 
+    font-size:14px; font-family:ui-monospace; padding:6px 10px; 
+    border:1px solid #ccc; border-radius:6px; background:#f7f7f7; 
+    word-break:break-all; text-align:left; cursor:pointer;
+    max-width: 100%;
+  }
+  button.data-btn:active { background:#e0e0e0; }
+  
+  input[type="checkbox"] { transform: scale(1.2); flex-shrink: 0; }
 
   /* 検索機能のフローティングUI */
   #search-container {
@@ -63,7 +72,7 @@
 
 <h3>ID / パスワード & カード コピー</h3>
 
-<textarea id="input" placeholder="id:password または 番号:期限:CVV を改行区切りで貼り付け" rows="4"></textarea>
+<textarea id="input" placeholder="ID:PW:カード番号:年:月:CVV を改行区切りで貼り付け" rows="4"></textarea>
 <div class="toolbar">
   <button id="addBtn">追加</button>
   <button id="clearBtn">クリア</button>
@@ -79,19 +88,24 @@
 <script>
 let items = [];
 const KEY = 'coloncopy.items.v2';
+const LABELS = ['ID', 'PW', 'カード番号', '年', '月', 'CVV'];
 
 function save(){ localStorage.setItem(KEY, JSON.stringify(items)); }
 
-// 過去のID/PWのみのデータフォーマットと互換性を持たせてロード
+// 過去のデータフォーマットと互換性を持たせてロード
 function load(){
   try{ 
     const loaded = JSON.parse(localStorage.getItem(KEY)||'[]'); 
     items = loaded.map(it => {
-      // 古い形式のデータがあれば新しい形式（type属性付き）に変換
-      if (it.idtxt !== undefined) {
-        return { type: 'idpw', p1: it.idtxt, p2: it.pwtxt, checked: it.checked || false };
-      }
-      return it;
+      // 今回の新しい形式
+      if (it.parts) return it;
+      // 最初のID:PWのみの形式
+      if (it.idtxt !== undefined) return { parts: [it.idtxt, it.pwtxt], checked: it.checked || false };
+      // 前回私が誤って提示した形式からの救済
+      if (it.type === 'card') return { parts: [it.p1, it.p2, it.p3], checked: it.checked || false };
+      if (it.type === 'idpw') return { parts: [it.p1, it.p2], checked: it.checked || false };
+      
+      return { parts: [], checked: false };
     });
   }
   catch(e){ items=[]; }
@@ -102,7 +116,6 @@ function copyText(txt){
   .catch(()=>alert('コピーできません（Safari設定を確認）'));
 }
 
-// 検索文字列を受け取ってフィルタリング表示
 function render(query = ''){
   const list = document.getElementById('list');
   list.innerHTML = '';
@@ -111,7 +124,7 @@ function render(query = ''){
   // 検索クエリで絞り込み
   const filtered = items.filter(it => {
     if(!q) return true;
-    const textToSearch = it.type === 'card' ? `${it.p1} ${it.p2} ${it.p3}` : `${it.p1} ${it.p2}`;
+    const textToSearch = it.parts.join(' ');
     return textToSearch.toLowerCase().includes(q);
   });
 
@@ -130,29 +143,31 @@ function render(query = ''){
     cb.addEventListener('change', ()=>{ it.checked = cb.checked; save(); });
     row.appendChild(cb);
 
-    const meta = document.createElement('div');
-    meta.className='meta';
-    if (it.type === 'card') {
-      meta.innerHTML = `<b>番号:</b> ${it.p1}<br><b>期限:</b> ${it.p2}<br><b>CVV:</b> ${it.p3}`;
-    } else {
-      meta.innerHTML = `<b>ID:</b> ${it.p1}<br><b>PW:</b> ${it.p2}`;
-    }
-    row.appendChild(meta);
+    const dataContainer = document.createElement('div');
+    dataContainer.className = 'data-container';
 
-    const btns = document.createElement('div');
-    btns.className='buttons';
+    // コロンで区切られた各パーツをボタンとして生成
+    it.parts.forEach((part, index) => {
+      if(!part) return; // 空の場合はスキップ
 
-    // タイプに応じてコピーボタンを生成
-    if (it.type === 'card') {
-      const btn1=document.createElement('button'); btn1.textContent='番号'; btn1.className='copy'; btn1.onclick=()=>copyText(it.p1); btns.appendChild(btn1);
-      const btn2=document.createElement('button'); btn2.textContent='期限'; btn2.className='copy'; btn2.onclick=()=>copyText(it.p2); btns.appendChild(btn2);
-      const btn3=document.createElement('button'); btn3.textContent='CVV'; btn3.className='copy'; btn3.onclick=()=>copyText(it.p3); btns.appendChild(btn3);
-    } else {
-      const idBtn=document.createElement('button'); idBtn.textContent='ID'; idBtn.className='copy'; idBtn.onclick=()=>copyText(it.p1); btns.appendChild(idBtn);
-      const pwBtn=document.createElement('button'); pwBtn.textContent='PW'; pwBtn.className='copy'; pwBtn.onclick=()=>copyText(it.p2); btns.appendChild(pwBtn);
-    }
+      const wrapper = document.createElement('div');
+      wrapper.className = 'btn-wrapper';
 
-    row.appendChild(btns);
+      const label = document.createElement('span');
+      label.className = 'label';
+      label.textContent = LABELS[index] || `項目${index + 1}`;
+      wrapper.appendChild(label);
+
+      const btn = document.createElement('button');
+      btn.className = 'data-btn';
+      btn.textContent = part;
+      btn.onclick = () => copyText(part);
+      wrapper.appendChild(btn);
+
+      dataContainer.appendChild(wrapper);
+    });
+
+    row.appendChild(dataContainer);
     list.appendChild(row);
   }
 }
@@ -164,17 +179,12 @@ document.getElementById('addBtn').onclick=()=>{
   const lines=val.split('\n').filter(l=>l.includes(':'));
   for(const line of lines){
     const parts = line.split(':').map(p=>p.trim());
-    
-    // コロンが2つ以上（カード情報）の場合
-    if(parts.length >= 3){
-      items.push({ type: 'card', p1: parts[0], p2: parts[1], p3: parts.slice(2).join(':'), checked: false });
-    } 
-    // コロンが1つ（ID:PW）の場合
-    else if(parts.length === 2){
-      if(parts[0] && parts[1]) items.push({ type: 'idpw', p1: parts[0], p2: parts[1], checked: false });
+    if(parts.length > 0) {
+      items.push({ parts: parts, checked: false });
     }
   }
   save(); 
+  
   // 検索状態をリセットして再描画
   document.getElementById('search-input').value = '';
   document.getElementById('search-container').classList.remove('active');
